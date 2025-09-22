@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Simple Image Gallery</title>
+  <style>
+    body{font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial;max-width:900px;margin:24px auto;padding:0 16px;color:#111}
+    h1{font-size:1.5rem;margin-bottom:8px}
+    .uploader{border:2px dashed #ccc;padding:20px;text-align:center;border-radius:8px;cursor:pointer}
+    .uploader.drag{background:#f6f9ff;border-color:#8aa2ff}
+    input[type=file]{display:none}
+    .controls{display:flex;gap:8px;margin:12px 0}
+    button{padding:8px 12px;border-radius:6px;border:1px solid #bbb;background:#fff;cursor:pointer}
+    .gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px;margin-top:12px}
+    .card{border:1px solid #e0e0e0;padding:6px;border-radius:8px;background:#fff;display:flex;flex-direction:column;gap:6px}
+    .thumb{width:100%;height:120px;object-fit:cover;border-radius:6px}
+    .meta{font-size:0.85rem;color:#333}
+    .small{font-size:0.85rem;color:#666}
+    .actions{display:flex;gap:6px}
+    .note{font-size:0.9rem;color:#444;margin-top:10px}
+    footer{margin-top:18px;font-size:0.85rem;color:#666}
+  </style>
+</head>
+<body>
+  <h1>เว็บเก็บรูปแบบง่าย (Local)</h1>
+  <p class="small">รูปจะถูกเก็บไว้ในเบราว์เซอร์ (localStorage). เหมาะสำหรับเก็บภาพส่วนตัวชั่วคราว — โปรดสำรองข้อมูลเป็นไฟล์ถ้าต้องการเก็บระยะยาว.</p>
+
+  <label id="dropZone" class="uploader">
+    คลิกหรือลากรูปมาที่นี่เพื่ออัปโหลด
+    <input id="fileInput" type="file" accept="image/*" multiple>
+  </label>
+
+  <div class="controls">
+    <button id="clearBtn">ล้างทั้งหมด</button>
+    <button id="exportBtn">ส่งออก (Backup .json)</button>
+    <input id="importFile" type="file" accept="application/json" style="display:none">
+    <button id="importBtn">นำเข้า (Restore .json)</button>
+  </div>
+
+  <div id="gallery" class="gallery" aria-live="polite"></div>
+
+  <p class="note">หมายเหตุ: localStorage มีขนาดจำกัด ขึ้นกับเบราว์เซอร์ (โดยทั่วไป ~5–50MB). หากต้องการเก็บรูปจำนวนมาก ให้ดาวน์โหลดสำรองหรือใช้บริการเก็บไฟล์ภายนอก.</p>
+
+  <footer>วิธีใช้: อัปโหลด → ดูตัวอย่าง → ดาวน์โหลดรูปทีละรูป หรือส่งออกเป็นไฟล์สำรอง (.json) แล้วนำเข้าเมื่อจำเป็น</footer>
+
+<script>
+// ชื่อคีย์ใน localStorage
+const STORAGE_KEY = 'simpleImageGallery_v1'
+
+const dropZone = document.getElementById('dropZone')
+const fileInput = document.getElementById('fileInput')
+const gallery = document.getElementById('gallery')
+const clearBtn = document.getElementById('clearBtn')
+const exportBtn = document.getElementById('exportBtn')
+const importBtn = document.getElementById('importBtn')
+const importFile = document.getElementById('importFile')
+
+// โหลดจาก storage เมื่อเปิดหน้า
+let images = loadFromStorage()
+renderGallery()
+
+// ช่วยอ่านไฟล์ภาพและเก็บเป็น dataURL
+function handleFiles(files){
+  const arr = Array.from(files)
+  const readers = arr.map(f => readFileAsDataURL(f).then(dataURL => ({name: f.name, data: dataURL, time: Date.now()})))
+  Promise.all(readers).then(results =>{
+    images = images.concat(results)
+    saveToStorage()
+    renderGallery()
+  }).catch(err=>console.error(err))
+}
+
+fileInput.addEventListener('change', e=>{
+  handleFiles(e.target.files)
+  fileInput.value = ''
+})
+
+// Drag & drop events
+;['dragenter','dragover'].forEach(ev=>{
+  dropZone.addEventListener(ev,e=>{e.preventDefault();dropZone.classList.add('drag')})
+})
+;['dragleave','drop'].forEach(ev=>{
+  dropZone.addEventListener(ev,e=>{e.preventDefault();dropZone.classList.remove('drag')})
+})
+
+dropZone.addEventListener('drop', e=>{
+  const dt = e.dataTransfer
+  if(dt && dt.files && dt.files.length){
+    handleFiles(dt.files)
+  }
+})
+
+// ให้คลิกเปิด file dialog
+dropZone.addEventListener('click', ()=>fileInput.click())
+
+// อ่านไฟล์เป็น dataURL
+function readFileAsDataURL(file){
+  return new Promise((res, rej)=>{
+    const r = new FileReader()
+    r.onload = ()=>res(r.result)
+    r.onerror = rej
+    r.readAsDataURL(file)
+  })
+}
+
+// เก็บลง localStorage
+function saveToStorage(){
+  try{
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(images))
+  }catch(e){
+    alert('ไม่สามารถบันทึกลง localStorage ได้ — พื้นที่อาจเต็ม')
+    console.error(e)
+  }
+}
+
+function loadFromStorage(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY)
+    if(!raw) return []
+    return JSON.parse(raw)
+  }catch(e){
+    console.error('load error', e)
+    return []
+  }
+}
+
+function renderGallery(){
+  gallery.innerHTML = ''
+  if(images.length === 0){
+    gallery.innerHTML = '<p class="small">ยังไม่มีรูป</p>'
+    return
+  }
+  images.slice().reverse().forEach((img, idx)=>{
+    const card = document.createElement('div')
+    card.className = 'card'
+
+    const imageEl = document.createElement('img')
+    imageEl.className = 'thumb'
+    imageEl.src = img.data
+    imageEl.alt = img.name
+
+    const meta = document.createElement('div')
+    meta.className = 'meta'
+    const date = new Date(img.time)
+    meta.textContent = img.name + ' — ' + date.toLocaleString()
+
+    const actions = document.createElement('div')
+    actions.className = 'actions'
+
+    // ดาวน์โหลดรูป
+    const dl = document.createElement('a')
+    dl.href = img.data
+    dl.download = img.name || ('image-'+idx+'.png')
+    dl.textContent = 'ดาวน์โหลด'
+    dl.style.textDecoration = 'none'
+    dl.style.padding = '6px 8px'
+    dl.style.border = '1px solid #bbb'
+    dl.style.borderRadius = '6px'
+
+    // ลบรูปนี้
+    const del = document.createElement('button')
+    del.textContent = 'ลบ'
+    del.addEventListener('click', ()=>{
+      if(!confirm('ลบรูปนี้จริงหรือไม่?')) return
+      const realIndex = images.length - 1 - idx
+      images.splice(realIndex,1)
+      saveToStorage()
+      renderGallery()
+    })
+
+    actions.appendChild(dl)
+    actions.appendChild(del)
+
+    card.appendChild(imageEl)
+    card.appendChild(meta)
+    card.appendChild(actions)
+    gallery.appendChild(card)
+  })
+}
+
+// ปุ่มล้างทั้งหมด
+clearBtn.addEventListener('click', ()=>{
+  if(!confirm('ล้างรูปทั้งหมดจากเว็บนี้? (จะหายจาก localStorage)')) return
+  images = []
+  saveToStorage()
+  renderGallery()
+})
+
+// ส่งออกเป็น JSON (backup)
+exportBtn.addEventListener('click', ()=>{
+  const blob = new Blob([JSON.stringify(images)], {type: 'application/json'})
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = 'image-gallery-backup-'+new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')+'.json'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+})
+
+// นำเข้า backup
+importBtn.addEventListener('click', ()=>importFile.click())
+importFile.addEventListener('change', e=>{
+  const f = e.target.files[0]
+  if(!f) return
+  const r = new FileReader()
+  r.onload = ()=>{
+    try{
+      const data = JSON.parse(r.result)
+      if(!Array.isArray(data)) throw new Error('ไฟล์ไม่ถูกต้อง')
+      if(!confirm('นำเข้าข้อมูลจากไฟล์สำรอง? ข้อมูลปัจจุบันในเว็บจะถูกแทนที่')) return
+      images = data
+      saveToStorage()
+      renderGallery()
+      alert('นำเข้าเรียบร้อย')
+    }catch(err){
+      alert('นำเข้าไฟล์ไม่สำเร็จ: ' + err.message)
+    }
+  }
+  r.readAsText(f)
+  importFile.value = ''
+})
+
+</script>
+</body>
+</html>
